@@ -38,7 +38,12 @@ download costs about 6 seconds.
 
 If a page fails, the index must fail loudly rather than return a truncated list — a partial index makes
 the tool report "nothing to do" while thousands of recordings are still pending. Pages are retried
-three times, then the run aborts.
+three times; the second attempt reconnects the session first, because the station answers
+`sent no complete history_record_info` at random pages and a fresh session usually fixes it.
+
+Reconnecting mid-walk (instead of restarting it) matters: a full walk is ~85 queries, each with its own
+chance of hitting that error, so restarting from page 1 turns a transient failure into a loop that never
+finishes. The cursor is stateless, so the walk simply continues where it was.
 
 ## The level-2 handshake
 

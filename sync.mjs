@@ -233,6 +233,7 @@ async function openSession() {
 async function buildIndex(ctx, { frontier = "" } = {}) {
   const byId = new Map();
   let cursor = "0";
+  let reconnects = 0;
   for (let page = 1; page <= 500; page++) {
     let rows = [];
     for (let attempt = 1; ; attempt++) {
@@ -249,10 +250,22 @@ async function buildIndex(ctx, { frontier = "" } = {}) {
       } catch (error) {
         // Never truncate silently: half an index reports "nothing to do" while thousands of recordings
         // are still pending. Retry the page, then fail the index loudly.
-        if (attempt >= 3) {
-          throw new Error(`incomplete index: page ${page} failed (${String(error?.message ?? error).slice(0, 120)})`);
+        const reason = String(error?.message ?? error).slice(0, 120);
+        if (attempt >= 3) throw new Error(`incomplete index: page ${page} failed (${reason})`);
+        // The station answers "sent no complete history_record_info" at random pages, and a fresh
+        // session usually fixes it. Reconnecting here — instead of restarting the whole walk — keeps the
+        // pages already collected: the cursor is stateless, so resuming at the same page is safe.
+        if (attempt >= 2 && reconnects < MAX_INDEX_RECONNECTS) {
+          reconnects++;
+          log(`index: page ${page} failed (${reason}) — reconnecting (${reconnects}/${MAX_INDEX_RECONNECTS})`);
+          try {
+            await attachStation(ctx);
+            continue;
+          } catch (reconnectError) {
+            log(`index: reconnect failed (${String(reconnectError?.message ?? reconnectError).slice(0, 120)})`);
+          }
         }
-        log(`index: page ${page} failed (${String(error?.message ?? error).slice(0, 120)}) — retrying`);
+        log(`index: page ${page} failed (${reason}) — retrying`);
         await new Promise((resolve) => setTimeout(resolve, 1500));
       }
     }
@@ -278,23 +291,8 @@ async function buildIndex(ctx, { frontier = "" } = {}) {
   return [...byId.values()].sort((a, b) => String(b.start_time).localeCompare(String(a.start_time)));
 }
 
-/**
- * Builds the index with a few retries: a fresh session sometimes reports level-2 ready while the first
- * database query still times out ("sent no complete history_record_info").
- *
- * @param {Record<string, any>} ctx
- */
-async function buildIndexWithRetry(ctx, options = {}) {
-  for (let attempt = 1; ; attempt++) {
-    try {
-      return await buildIndex(ctx, options);
-    } catch (error) {
-      if (attempt >= 3) throw error;
-      log(`index: attempt ${attempt} failed (${String(error?.message ?? error).slice(0, 120)}) — reconnecting`);
-      await attachStation(ctx);
-    }
-  }
-}
+/** How many times one index walk may reconnect before giving up. */
+const MAX_INDEX_RECONNECTS = 8;
 
 // ---------------------------------------------------------------------------
 // Download and write
@@ -447,7 +445,7 @@ async function run() {
   const fullIndex = MODE.force || MODE.fullIndex || Boolean(since) || !state.frontier;
   const frontier = fullIndex ? "" : String(state.frontier);
   log(fullIndex ? "index: full traversal" : `index: incremental from frontier ${frontier}`);
-  const index = await buildIndexWithRetry(ctx, { frontier });
+  const index = await buildIndex(ctx, { frontier });
   writeFileSync(indexFile(cfg.stateDir), JSON.stringify({ at: new Date().toISOString(), count: index.length, rows: index }));
   log(`index: ${index.length} recordings on the HomeBase`);
 
