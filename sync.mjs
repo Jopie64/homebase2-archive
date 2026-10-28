@@ -73,6 +73,19 @@ const { mode: MODE, limit, since } = parseArgs(args, cfg);
 // Helpers
 // ---------------------------------------------------------------------------
 /**
+ * Renders an error with its cause chain. Node's fetch reports "fetch failed" and hides the useful part
+ * (ECONNRESET, ETIMEDOUT, a TLS problem) one or two levels down in `cause`.
+ */
+function describeError(error) {
+  const parts = [String(error?.message ?? error)];
+  let cause = error?.cause;
+  for (let depth = 0; cause && depth < 3; depth++) {
+    parts.push(String(cause?.code ?? cause?.message ?? cause));
+    cause = cause?.cause;
+  }
+  return parts.join(" <- ");
+}
+/**
  * Reads `EMAIL`/`PASSWORD`/`COUNTRY` from the credentials file. The older `EUFY_`-prefixed names are
  * accepted too, so an existing setup keeps working.
  *
@@ -475,7 +488,7 @@ async function run() {
         );
         break;
       } catch (error) {
-        const message = String(error?.message ?? error).slice(0, 300);
+        const message = describeError(error).slice(0, 300);
 
         // Permanently unusable (no key in the cloud): record it as skipped instead of failed, otherwise
         // every run retries the same thousands of recordings and aborts after its retry budget.
@@ -541,7 +554,7 @@ try {
   result = await main();
   code = result.failed === 0 ? 0 : 1;
 } catch (error) {
-  log(`abort: ${String(error?.message ?? error).slice(0, 400)}`);
+  log(`abort: ${describeError(error).slice(0, 400)}`);
 } finally {
   // A stable, single line for wrappers (backfill.sh) to read, whatever the outcome.
   log(`summary: archived=${result.ok} failed=${result.failed} skipped=${result.skipped} pending=${result.pending}`);
