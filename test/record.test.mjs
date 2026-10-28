@@ -32,8 +32,12 @@ describe("toCursor", () => {
 });
 
 describe("recordingName", () => {
-  it("returns the recording name the station knows", () => {
-    expect(recordingName("/media/mmcblk0p1/Camera00/h265_20261028125700.dat")).toBe("h265_20261028125700.dat");
+  it("returns the name without the extension the station appends itself", () => {
+    expect(recordingName("/media/mmcblk0p1/Camera00/h265_20261028125700.dat")).toBe("h265_20261028125700");
+  });
+
+  it("also accepts a path that already carries no extension", () => {
+    expect(recordingName("/media/mmcblk0p1/Camera00/h265_20261028125700")).toBe("h265_20261028125700");
   });
 
   it("returns an empty string when there is no path", () => {

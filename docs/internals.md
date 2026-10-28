@@ -40,7 +40,8 @@ next to a sync.
 Recordings live on the station as `/media/mmcblk0p1/Camera<NN>/h265_<yyyymmddhhmmss>.dat`.
 
 - The camera capability `downloadRecording({ recording, cipherId, timeoutMs })` takes the recording
-  **name** — `h265_<14 digits>.dat` — and builds the path itself. Passing the bare 14-digit name used to
+  **name without the `.dat` extension** — `h265_<14 digits>` — and appends `/Camera<NN>/` and `.dat`
+  itself. Passing the bare 14-digit name used to
   build a valid path for current recordings and a broken one for archived ones: upstream issue
   [#526](https://github.com/mega-yfue/eufy-sdk/issues/526), fixed in `0.6.0-beta.12` (the version this
   project pins). Downloading the decoder was never the fix: a host can now use the capability, so the
