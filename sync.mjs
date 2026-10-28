@@ -4,8 +4,8 @@
  *
  * Route: log in through @mega-yfue/eufy-sdk, open a P2P session to the HomeBase, wait for the level-2
  * handshake, page through `history_record_info` (cursor = `yyyyMMddHHmmss` of the oldest row of the
- * previous page), download each recording with `CMD_DOWNLOAD_VIDEO` using its full `storage_path`,
- * decrypt the frames with the ECC key of that row's cipher, and mux to MP4 with ffmpeg.
+ * previous page), ask each camera for its recording (`camera.downloadRecording()`, which fetches the
+ * cipher's ECC key, downloads and decrypts), and mux the returned elementary streams to MP4 with ffmpeg.
  *
  * One run = one login, one session, sequential downloads: the HomeBase does not tolerate parallel
  * transfers. State makes every run resumable and a lock prevents overlapping runs.
@@ -33,12 +33,11 @@ import {
 } from "node:fs";
 import { spawnSync } from "node:child_process";
 import path from "node:path";
-import { EufyMega } from "@mega-yfue/eufy-sdk";
-import { FileSessionStore, decodeRecording, receiveRecording } from "@mega-yfue/eufy-sdk";
+import { EufyMega, FileSessionStore, RecordingDownloadError } from "@mega-yfue/eufy-sdk";
 import { parseArgs } from "./lib/cli.mjs";
 import { loadConfig } from "./lib/config.mjs";
 import { createLogger } from "./lib/log.mjs";
-import { channelOf, clipTarget, isPending, toCursor } from "./lib/record.mjs";
+import { channelOf, clipTarget, isPending, recordingName, toCursor } from "./lib/record.mjs";
 import {
   acquireLock,
   dropSession,
@@ -149,7 +148,6 @@ async function attachStation(ctx) {
   if (!session.level2Key && !session.level2Ready) throw new Error("level-2 handshake timeout");
   log(`session: level-2 ready in ${((Date.now() - startedAt) / 1000).toFixed(1)}s`);
   ctx.session = session;
-  ctx.eccCache?.clear();
   return session;
 }
 
@@ -276,38 +274,51 @@ async function buildIndexWithRetry(ctx) {
 // ---------------------------------------------------------------------------
 // Download and write
 // ---------------------------------------------------------------------------
+/** Failure reasons that will never change for a given row, so retrying it is pointless. */
+const PERMANENT_REASONS = new Set(["key-unavailable", "invalid-recording"]);
+
+/**
+ * Finds the camera behind a station channel. The camera — not the station — owns the recording-download
+ * capability, and it resolves its own session, channel and cipher key.
+ */
+async function cameraFor(ctx, channel) {
+  ctx.cameras ??= (await ctx.eufy.getDevices()).filter(
+    (device) =>
+      device.deviceClass === "camera" &&
+      (device.stationSn === ctx.station.sn || device.raw?.parent_sn === ctx.station.sn),
+  );
+  const camera =
+    ctx.cameras.find((device) => device.channel === channel) ??
+    (ctx.cameras.length === 1 ? ctx.cameras[0] : undefined);
+  if (!camera) throw new Error(`no camera on channel ${channel} of station ${ctx.station.sn}`);
+
+  ctx.devices ??= new Map();
+  if (!ctx.devices.has(camera.sn)) ctx.devices.set(camera.sn, await ctx.eufy.getDevice(camera.sn));
+  const device = ctx.devices.get(camera.sn);
+  if (typeof device.downloadRecording !== "function") {
+    throw new Error(`camera ${camera.sn} does not offer recording download in this SDK version`);
+  }
+  return device;
+}
+
 /** Downloads one recording and returns the decrypted elementary streams. */
 async function fetchClip(ctx, row) {
   const storagePath = String(row.storage_path ?? "");
   const channel = channelOf(storagePath);
-  if (!storagePath || channel === undefined) throw new Error(`unusable storage_path: ${storagePath}`);
+  const recording = recordingName(storagePath);
+  if (!storagePath || channel === undefined || !recording) throw new Error(`unusable storage_path: ${storagePath}`);
   // The cloud masks the cipher id; only the low byte resolves to a key record.
   const cipher = (Number(row.cipher_id) || 0) & 0xff;
-  const ecc = await ctx.eccKey(cipher);
-  if (!ecc) {
-    const error = new Error(`no ECC key for cipher ${cipher} (the cloud returns no key record)`);
-    error.permanent = true;
+  const camera = await cameraFor(ctx, channel);
+  try {
+    // The SDK queues downloads per station (one transfer at a time on the camera's channel), fetches the
+    // cipher's ECC key, decrypts and returns H.264/AAC elementary streams.
+    const clip = await camera.downloadRecording({ recording, cipherId: cipher, timeoutMs: cfg.clipTimeoutMs });
+    return { clip, cipher, channel };
+  } catch (error) {
+    if (error instanceof RecordingDownloadError && PERMANENT_REASONS.has(error.reason)) error.permanent = true;
     throw error;
   }
-
-  const transfer = receiveRecording(ctx.session, {
-    path: storagePath,
-    accountId: ctx.admin,
-    channel,
-    timeoutMs: cfg.clipTimeoutMs,
-  });
-  let frames;
-  try {
-    frames = await transfer.frames;
-  } finally {
-    // The HomeBase sometimes keeps sending after a timeout; do not wait forever.
-    await Promise.race([
-      transfer.drained.catch(() => {}),
-      new Promise((resolve) => setTimeout(resolve, cfg.drainTimeoutMs)),
-    ]);
-  }
-  const clip = decodeRecording(frames, ecc);
-  return { clip, cipher, channel };
 }
 
 /** Writes the streams as MP4 (ffmpeg) or, when muxing is impossible, as raw elementary streams. */
@@ -386,9 +397,6 @@ async function main() {
   if (!MODE.list && !existsSync(path.dirname(cfg.outDir))) {
     throw new Error(`parent directory of outDir does not exist: ${path.dirname(cfg.outDir)}`);
   }
-  if (typeof decodeRecording !== "function") {
-    throw new Error("decodeRecording is missing — run `npm run patch` (scripts/patch-sdk.mjs)");
-  }
   if (!acquireLock(cfg.stateDir, { log })) return { ok: 0, failed: 0, skipped: 0, pending: 0 };
   try {
     checkMuxer();
@@ -401,20 +409,6 @@ async function main() {
 async function run() {
   const state = loadState(cfg.stateDir);
   const ctx = await openSession();
-  ctx.eccKey = async (cipher) => {
-    ctx.eccCache ??= new Map();
-    if (!ctx.eccCache.has(cipher)) {
-      let key;
-      try {
-        const ciphers = await ctx.eufy.mega.getCiphers([cipher], ctx.admin, ctx.station.sn);
-        key = ciphers.find((record) => Number(record.cipher_id) === cipher)?.ecc_private_key;
-      } catch (error) {
-        log(`cipher ${cipher}: fetching failed (${String(error?.message ?? error).slice(0, 120)})`);
-      }
-      ctx.eccCache.set(cipher, key);
-    }
-    return ctx.eccCache.get(cipher);
-  };
 
   const limitLabel = limit === Number.POSITIVE_INFINITY ? "all" : String(limit);
   log(`start: ${MODE.list ? "list mode" : "sync mode"} | station ${ctx.station.sn} | target ${cfg.outDir} | limit ${limitLabel}`);

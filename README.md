@@ -62,7 +62,7 @@ login (once, session stored) ─► P2P session ─► level-2 handshake
         ├─► page the record list (cursor = oldest timestamp of the previous page, dedupe on record_id)
         │
         └─► for each pending recording:
-              CMD_DOWNLOAD_VIDEO (full storage_path) → frames → decrypt (cipher ECC key)
+              camera.downloadRecording() → key, transfer, decrypt → H.264 + AAC streams
               → ffmpeg -c copy → <outDir>/YYYY-MM/YYYY-MM-DD_HH-MM-SS.mp4 → state.json
 ```
 
@@ -80,6 +80,7 @@ The details — pagination quirks, cipher IDs, session death, filesystem traps �
 | **ffmpeg** | any build that can read raw H.264 (`ffmpeg -demuxers \| grep h264`). **Distro and Synology stock builds often cannot** — use a static build, see [Installation](#installation) |
 | **A eufy account** | with the HomeBase 2 on it, and the station reachable on your LAN |
 | **Disk space** | roughly 200 KiB per recording; a year of doorbell clips is a few GiB |
+| **SDK** | installed by `install.sh`; pinned to `@mega-yfue/eufy-sdk@0.6.0-beta.12` |
 
 The station is contacted over the local network (P2P); the cloud is only used for login, the device list,
 the cipher keys and (optionally) nothing else. No cloud subscription is required.
@@ -96,9 +97,9 @@ $EDITOR config.json            # at minimum: outDir, and up to you: stationSn, f
 ./install.sh
 ```
 
-`install.sh` checks the Node version, installs the SDK, applies a small export patch (see
-[Why the patch?](#why-the-patch)), creates the state and output directories and reports where it will
-write.
+`install.sh` checks the Node version, installs the SDK (pinned: the recording-download capability and
+the HomeBase 2 path fix live in `0.6.0-beta.12`), creates the state and output directories and reports
+where it will write. There is no post-install patch step.
 
 ### ffmpeg
 
@@ -115,14 +116,6 @@ cp /tmp/ffmpeg-*-static/ffmpeg /tmp/ffmpeg-*-static/ffprobe ~/.local/bin/
 
 Then set `"ffmpeg": "~/.local/bin/ffmpeg"` in `config.json`. If the muxer cannot read H.264 the run
 refuses to start, instead of quietly writing thousands of `.h264` files.
-
-### Why the patch?
-
-The SDK (`@mega-yfue/eufy-sdk`) contains the frame decoder but does not export it
-(upstream issue [#526](https://github.com/mega-yfue/eufy-sdk/issues/526)). `scripts/patch-sdk.mjs`
-appends one export line to the installed bundle. It is idempotent and runs after every `npm install`.
-A future SDK release that exports the decoder — or a host application using `camera.downloadRecording()`
-— makes it unnecessary.
 
 ## Credentials
 
@@ -166,7 +159,6 @@ HBA_OUT_DIR=/mnt/doorbell ./run.sh --limit 5
 | `pageSize` | `HBA_PAGE_SIZE` | `100` | rows per record-list page |
 | `since` | `HBA_SINCE` | *(empty)* | only recordings from this day on (`yyyyMMdd`) |
 | `clipTimeoutMs` | `HBA_CLIP_TIMEOUT_MS` | `90000` | timeout per download |
-| `drainTimeoutMs` | `HBA_DRAIN_TIMEOUT_MS` | `60000` | how long to wait for a stalled transfer to drain |
 | `maxAttempts` | `HBA_MAX_ATTEMPTS` | `3` | attempts before a failed clip is left alone (until `--force`) |
 | `recoverAfter` | `HBA_RECOVER_AFTER` | `3` | consecutive session errors before reconnecting |
 | `maxRecoveries` | `HBA_MAX_RECOVERIES` | `40` | reconnects allowed per run |
@@ -256,7 +248,8 @@ health check in monitoring.
 | `no ECC key for cipher N` | Expected for some older recordings — the cloud has no key for that cipher, so no client can decrypt them. Recorded as `skipped`. See [internals](docs/internals.md#ciphers-and-why-old-recordings-cannot-be-decrypted). |
 | `session keeps failing despite recovery` | The station stopped answering. The run exits cleanly; the next run continues. |
 | `muxer ... has no h264 demuxer` | Point `ffmpeg` at a full build (see [ffmpeg](#ffmpeg)). |
-| `decodeRecording is missing` | Run `npm run patch` (or `./install.sh` again). |
+| `camera … does not offer recording download in this SDK version` | The installed SDK is older than `0.6.0-beta.12`, or the camera model has no verified download path. Check `npm ls @mega-yfue/eufy-sdk`. |
+| `no camera on channel N of station …` | The channel in the record list has no camera attached in this account (stale rows). Reported per row. |
 | Run stops with a lock message | A previous run died. Remove `sync.lock` from the state directory (a lock older than 6 h is cleaned up automatically). |
 | `sent no complete history_record_info` | The station serves one database reader at a time; never run two queries/probes next to a sync. |
 
@@ -294,7 +287,7 @@ The suite covers the logic that decisions depend on, with I/O kept at the edges:
 | `lib/record.mjs` | which rows are usable/pending, cursors, output naming |
 | `lib/state.mjs` | atomic state file, run lock, session file |
 | `lib/log.mjs` | stdout + rotating log file |
-| `sync.mjs` | the engine: session, index, download, decrypt, mux |
+| `sync.mjs` | the engine: session, index, per-camera download, mux |
 
 Rules of thumb when changing something:
 
@@ -314,9 +307,8 @@ CI runs the tests plus a syntax check on every push and pull request (Node 24 an
 ## Dependencies and licensing
 
 The single runtime dependency is [`@mega-yfue/eufy-sdk`](https://github.com/mega-yfue/eufy-sdk), installed from
-npm (Apache-2.0, not vendored). `scripts/patch-sdk.mjs` appends one export line to the *installed* copy during
-setup — a local modification of an Apache-2.0 work that stays inside the installed package; its licence and
-notices are left untouched. This project itself is MIT.
+npm (Apache-2.0, not vendored) and pinned to the beta that provides the recording-download capability. This
+project itself is MIT.
 
 ## Legal notice
 

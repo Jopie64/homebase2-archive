@@ -39,19 +39,25 @@ next to a sync.
 
 Recordings live on the station as `/media/mmcblk0p1/Camera<NN>/h265_<yyyymmddhhmmss>.dat`.
 
-- Download with `CMD_DOWNLOAD_VIDEO` (1024) and the **complete `storage_path`**, including `h265_`
-  prefix and `.dat` suffix. Passing the bare 14-digit name builds a valid path for current recordings
-  and a broken one for archived ones — that is upstream issue
-  [#526](https://github.com/mega-yfue/eufy-sdk/issues/526), fixed in `0.6.0-beta.12`.
-- The channel number comes from the `Camera<NN>` part of the path.
+- The camera capability `downloadRecording({ recording, cipherId, timeoutMs })` takes the recording
+  **name** — `h265_<14 digits>.dat` — and builds the path itself. Passing the bare 14-digit name used to
+  build a valid path for current recordings and a broken one for archived ones: upstream issue
+  [#526](https://github.com/mega-yfue/eufy-sdk/issues/526), fixed in `0.6.0-beta.12` (the version this
+  project pins). Downloading the decoder was never the fix: a host can now use the capability, so the
+  old "export `decodeRecording` by patching the bundle" workaround is gone.
+- The channel number comes from the `Camera<NN>` part of the path and identifies which camera of the
+  station the recording belongs to.
+- The capability resolves the cipher key, waits for the station's previous download to drain and returns
+  H.264/AAC elementary streams, so the caller never touches the transfer or the decoder.
 - A few list rows are unusable (no `frame_num`, or a path that does not match). They are filtered out
   before anything is downloaded.
 
 ## Ciphers, and why old recordings cannot be decrypted
 
-Each row carries a `cipher_id`. Only the **low byte** resolves to a key record
-(`(cipher_id & 0xff)`); the full 32-bit value returns an empty key list. Keys come from
-`get_ciphers` (`/v3/app/cipher/get_ciphers`).
+Each row carries a `cipher_id`, and the pass-down is not obvious: only the **low byte** resolves to a
+key record (`(cipher_id & 0xff)`); the full 32-bit value returns an empty key list. The capability masks
+nothing, so this project passes the masked id. Keys come from `get_ciphers`
+(`/v3/app/cipher/get_ciphers`).
 
 Measured on one station (roughly 8,400 recordings, spanning 2022-12 → now):
 
@@ -74,6 +80,17 @@ this tool: those rows are recorded as `skipped` with the reason, and `--force` w
 If a key ever becomes available for one of these ciphers, the file names (`h265_…`) and the plaintext
 slices suggest the old recordings are **HEVC** rather than H.264, so a decrypt of those would also need
 a different muxing route (`-f hevc`). That has not been verified.
+
+## What the SDK does for us (and what it does not)
+
+Taken care of by `camera.downloadRecording()`: the per-station download queue (one transfer at a time,
+the next one starts only after the previous has drained), the ECC key lookup, the decryption, and
+counting frames/missing frames/duration. Failure reasons arrive typed
+(`RecordingDownloadError.reason`: `key-unavailable`, `invalid-recording`, `no-data`, `incomplete`,
+`undecodable`), which is what tells this project which rows to mark as `skipped` instead of `failed`.
+
+Not taken care of — still ours: the login/session lifecycle and its rate limit, the level-2 handshake
+wait, index pagination, choosing which rows to download, state, locking, naming, muxing and scheduling.
 
 ## Session death
 

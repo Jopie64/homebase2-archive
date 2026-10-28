@@ -9,7 +9,6 @@
   "pageSize": 100,
   "since": "",
   "clipTimeoutMs": 90000,
-  "drainTimeoutMs": 60000,
   "maxAttempts": 3,
   "recoverAfter": 3,
   "maxRecoveries": 40,

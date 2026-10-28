@@ -1,6 +1,6 @@
 #!/bin/sh
-# install.sh — one-time setup in this directory: dependencies, the SDK export patch and the directories
-# from config.json. Requires node >= 24.5 with npm on PATH (or a nodeBin in config.json / HBA_NODE_BIN).
+# install.sh — one-time setup in this directory: dependencies and the directories from config.json.
+# Requires node >= 24.5 with npm on PATH (or a nodeBin in config.json / HBA_NODE_BIN).
 set -eu
 HERE=$(cd "$(dirname "$0")" && pwd)
 CONFIG=${HBA_CONFIG:-$HERE/config.json}
@@ -60,7 +60,6 @@ if [ -f package-lock.json ]; then
 else
   npm install --omit=dev --no-audit --no-fund
 fi
-"$NODE_BIN" scripts/patch-sdk.mjs
 
 cat <<EOF
 

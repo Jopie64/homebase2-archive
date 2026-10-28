@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { channelOf, clipTarget, isPending, isUsable, toCursor } from "../lib/record.mjs";
+import { channelOf, clipTarget, isPending, isUsable, recordingName, toCursor } from "../lib/record.mjs";
 
 const row = (overrides = {}) => ({
   record_id: "123456789",
@@ -28,6 +28,16 @@ describe("toCursor", () => {
 
   it("returns an empty string for missing values", () => {
     expect(toCursor(undefined)).toBe("");
+  });
+});
+
+describe("recordingName", () => {
+  it("returns the recording name the station knows", () => {
+    expect(recordingName("/media/mmcblk0p1/Camera00/h265_20261028125700.dat")).toBe("h265_20261028125700.dat");
+  });
+
+  it("returns an empty string when there is no path", () => {
+    expect(recordingName(undefined)).toBe("");
   });
 });
 
