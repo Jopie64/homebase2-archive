@@ -35,8 +35,10 @@ import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { EufyMega } from "@mega-yfue/eufy-sdk";
 import { FileSessionStore, decodeRecording, receiveRecording } from "@mega-yfue/eufy-sdk";
+import { parseArgs } from "./lib/cli.mjs";
 import { loadConfig } from "./lib/config.mjs";
 import { createLogger } from "./lib/log.mjs";
+import { channelOf, clipTarget, isPending, toCursor } from "./lib/record.mjs";
 import {
   acquireLock,
   dropSession,
@@ -60,39 +62,17 @@ try {
 const { log } = createLogger({ stateDir: cfg.stateDir });
 
 const args = process.argv.slice(2);
-const flag = (name) => args.includes(`--${name}`);
-const opt = (name, fallback) => {
-  const inline = args.find((argument) => argument.startsWith(`--${name}=`));
-  if (inline) return inline.slice(name.length + 3);
-  const index = args.indexOf(`--${name}`);
-  const next = args[index + 1];
-  if (index !== -1 && next && !next.startsWith("--")) return next;
-  return fallback;
-};
-const MODE = {
-  list: flag("list"),
-  all: flag("all"),
-  force: flag("force"),
-  indexOnly: flag("index-only"),
-  printConfig: flag("print-config"),
-};
-const limit = MODE.all ? Number.POSITIVE_INFINITY : Number(opt("limit", cfg.maxClips));
-const since = String(opt("since", cfg.since)).replace(/\D/g, "");
 
-if (MODE.printConfig) {
+if (args.includes("--print-config")) {
   console.log(JSON.stringify(cfg, null, 2));
   process.exit(0);
 }
 
+const { mode: MODE, limit, since } = parseArgs(args, cfg);
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-const toCursor = (value) => String(value ?? "").replace(/\D/g, "").slice(0, 14);
-const channelOf = (storagePath) => {
-  const match = /Camera(\d+)/.exec(String(storagePath ?? ""));
-  return match ? Number(match[1]) : undefined;
-};
-
 /**
  * Reads `EMAIL`/`PASSWORD`/`COUNTRY` from the credentials file. The older `EUFY_`-prefixed names are
  * accepted too, so an existing setup keeps working.
@@ -293,23 +273,6 @@ async function buildIndexWithRetry(ctx) {
   }
 }
 
-/** A recording that can be archived, is not archived yet, and is not exhausted by earlier failures. */
-function isPending(row, state) {
-  if (!usable(row)) return false;
-  if (state.clips[row.record_id]) return false;
-  if (state.skipped?.[row.record_id] && !MODE.force) return false;
-  const failure = state.failures[row.record_id];
-  if (failure && !MODE.force && Number(failure.attempts ?? 0) >= cfg.maxAttempts) return false;
-  return true;
-}
-
-function usable(row) {
-  if (!/h265_\d{14}\.dat$/.test(String(row.storage_path ?? ""))) return false;
-  if (!(Number(row.frame_num) > 0)) return false;
-  if (since && toCursor(row.start_time) < since) return false;
-  return true;
-}
-
 // ---------------------------------------------------------------------------
 // Download and write
 // ---------------------------------------------------------------------------
@@ -349,16 +312,14 @@ async function fetchClip(ctx, row) {
 
 /** Writes the streams as MP4 (ffmpeg) or, when muxing is impossible, as raw elementary streams. */
 function writeClip(row, clip) {
-  const start = String(row.start_time ?? "");
-  const day = start.slice(0, 10) || "unknown";
-  const month = day.slice(0, 7) || "unknown";
-  const dir = path.join(cfg.outDir, month);
+  const { dir, target: initialTarget } = clipTarget({
+    outDir: cfg.outDir,
+    start: row.start_time,
+    recordId: row.record_id,
+    exists: existsSync,
+  });
   mkdirSync(dir, { recursive: true });
-
-  const stamp = `${day}_${start.slice(11, 19).replace(/:/g, "-")}`;
-  const base = path.join(dir, `${stamp}${start.length ? "" : `_${row.record_id}`}`);
-  let target = `${base}.mp4`;
-  if (existsSync(target)) target = `${base}_${String(row.record_id).slice(-6)}.mp4`;
+  let target = initialTarget;
 
   // Temporary files live in the target directory itself: state and output are often on different
   // filesystems (btrfs subvolumes, bind mounts), where a rename fails with EXDEV.
@@ -461,7 +422,9 @@ async function run() {
   writeFileSync(indexFile(cfg.stateDir), JSON.stringify({ at: new Date().toISOString(), count: index.length, rows: index }));
   log(`index: ${index.length} recordings on the HomeBase`);
 
-  const pending = index.filter((row) => isPending(row, state));
+  const pending = index.filter((row) =>
+    isPending(row, state, { since, force: MODE.force, maxAttempts: cfg.maxAttempts }),
+  );
   const archived = Object.keys(state.clips).length;
   log(`state: ${archived} archived, ${Object.keys(state.failures).length} failed, ${pending.length} pending`);
 
