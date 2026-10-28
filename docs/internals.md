@@ -14,12 +14,27 @@ It is written down because none of it is documented anywhere and every point bel
 - `count` is honoured (100 in, 100 out), but **every row appears twice in a reply**. Deduplicating on
   `record_id` is mandatory; without it the count comes out halved.
 
-## Why the index is always complete
+## The index frontier
 
-A tempting optimisation is to stop paging as soon as a page is fully archived. It is wrong: during a
-partial backfill the newest pages are exactly the ones already done, while the unarchived history sits
-below them. An early stop would therefore never reach old recordings. The full index costs a minute or
-two per run and is the safe choice.
+Stopping as soon as a page is fully archived is wrong: during a partial backfill the newest pages are
+exactly the ones already done, while the unarchived history sits below them.
+
+So the stop condition is not "this page is done" but "these rows already have a decision". `state.json`
+keeps a **frontier**: the newest timestamp at which every row at or below it is decided (archived,
+skipped, or failed beyond its retry budget). Paging stops when a page reaches that frontier.
+
+- First run: no frontier, so the whole list is walked and the frontier is set to the newest row seen.
+- Steady state: page 1 is already older than the frontier → one page, a second or two.
+- A run that hits its clip limit leaves pending rows; the frontier is then set to the **oldest pending
+  row**, so the next run pages down to it.
+- A backfill therefore keeps walking the list (its oldest pending row is near the bottom) until the
+  history is exhausted — the frontier descends, and never skips work.
+- `--force` (which makes decided rows pending again) and `--since` (which hides rows) both disable the
+  incremental path, because they invalidate the "everything below is decided" invariant.
+
+The same frontier also answers "why did my hourly run take five minutes": every page is a P2P database
+query of roughly 3–4 seconds, so the full list of 8,400 recordings costs about 5 minutes, while a clip
+download costs about 6 seconds.
 
 If a page fails, the index must fail loudly rather than return a truncated list — a partial index makes
 the tool report "nothing to do" while thousands of recordings are still pending. Pages are retried

@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { channelOf, clipTarget, isPending, isUsable, recordingName, toCursor } from "../lib/record.mjs";
+import {
+  channelOf,
+  clipTarget,
+  isPending,
+  isUsable,
+  nextFrontier,
+  reachedKnownTerritory,
+  recordingName,
+  toCursor,
+} from "../lib/record.mjs";
 
 const row = (overrides = {}) => ({
   record_id: "123456789",
@@ -157,5 +166,51 @@ describe("clipTarget", () => {
     const target = clipTarget({ outDir: "/archive", start: "", recordId: "987654321" });
     expect(target.dir).toBe("/archive/unknown");
     expect(target.target).toBe("/archive/unknown/unknown_987654321.mp4");
+  });
+});
+
+describe("reachedKnownTerritory", () => {
+  it("stops when the page reaches a decided row", () => {
+    expect(reachedKnownTerritory({ pageOldest: "20261028120000", frontier: "20261028120000" })).toBe(true);
+    expect(reachedKnownTerritory({ pageOldest: "20261027120000", frontier: "20261028120000" })).toBe(true);
+  });
+
+  it("keeps paging while the page is still newer than the frontier", () => {
+    expect(reachedKnownTerritory({ pageOldest: "20261029120000", frontier: "20261028120000" })).toBe(false);
+  });
+
+  it("never stops without a frontier, so the first run is complete", () => {
+    expect(reachedKnownTerritory({ pageOldest: "20220101000000", frontier: "" })).toBe(false);
+    expect(reachedKnownTerritory({ pageOldest: "", frontier: "20261028120000" })).toBe(false);
+  });
+});
+
+describe("nextFrontier", () => {
+  it("puts the frontier just below the oldest still-pending row", () => {
+    expect(
+      nextFrontier({ previous: "20261001000000", oldestPending: "20261020120000", newestSeen: "20261028120000" }),
+    ).toBe("20261020120000");
+  });
+
+  it("covers everything seen when nothing is pending", () => {
+    expect(nextFrontier({ previous: "20261001000000", oldestPending: "", newestSeen: "20261028120000" })).toBe(
+      "20261028120000",
+    );
+  });
+
+  it("keeps the previous frontier when nothing was seen", () => {
+    expect(nextFrontier({ previous: "20261001000000", oldestPending: "", newestSeen: "" })).toBe("20261001000000");
+  });
+
+  it("lets the frontier descend during a backfill round that leaves pending rows", () => {
+    // Round 1: only the newest 400 archived, so the oldest pending is near the bottom of the list.
+    const afterRound1 = nextFrontier({
+      previous: "20261028120000",
+      oldestPending: "20220101000000",
+      newestSeen: "20261028120000",
+    });
+    expect(afterRound1).toBe("20220101000000");
+    // Round 2 must therefore page all the way down again, not stop at one page.
+    expect(reachedKnownTerritory({ pageOldest: "20261028000000", frontier: afterRound1 })).toBe(false);
   });
 });

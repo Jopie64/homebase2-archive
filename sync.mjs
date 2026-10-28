@@ -37,7 +37,15 @@ import { EufyMega, FileSessionStore, RecordingDownloadError } from "@mega-yfue/e
 import { parseArgs } from "./lib/cli.mjs";
 import { loadConfig } from "./lib/config.mjs";
 import { createLogger } from "./lib/log.mjs";
-import { channelOf, clipTarget, isPending, recordingName, toCursor } from "./lib/record.mjs";
+import {
+  channelOf,
+  clipTarget,
+  isPending,
+  nextFrontier,
+  reachedKnownTerritory,
+  recordingName,
+  toCursor,
+} from "./lib/record.mjs";
 import {
   acquireLock,
   dropSession,
@@ -222,7 +230,7 @@ async function openSession() {
  *
  * @param {Record<string, any>} ctx
  */
-async function buildIndex(ctx) {
+async function buildIndex(ctx, { frontier = "" } = {}) {
   const byId = new Map();
   let cursor = "0";
   for (let page = 1; page <= 500; page++) {
@@ -256,9 +264,13 @@ async function buildIndex(ctx) {
       log("index: cursor stalled — stopping");
       break;
     }
-    // No early stop: during a partly finished backfill the newest pages are exactly the ones already
-    // archived, so "this page is done" says nothing about the pages below it. A full index is the
-    // safe price for never missing old history.
+    // Stop as soon as the pages reach rows an earlier run already decided on. The frontier only ever
+    // covers rows with a decision, so this cannot skip history that still has to be archived — during a
+    // backfill it sits near the oldest pending row and the index still pages all the way down.
+    if (reachedKnownTerritory({ pageOldest: next, frontier })) {
+      log(`index: reached decided rows at ${next} after ${page} pages — stopping`);
+      break;
+    }
     cursor = next;
     if (page % 10 === 0) log(`index: ${byId.size} recordings after ${page} pages`);
     await new Promise((resolve) => setTimeout(resolve, 300));
@@ -272,10 +284,10 @@ async function buildIndex(ctx) {
  *
  * @param {Record<string, any>} ctx
  */
-async function buildIndexWithRetry(ctx) {
+async function buildIndexWithRetry(ctx, options = {}) {
   for (let attempt = 1; ; attempt++) {
     try {
-      return await buildIndex(ctx);
+      return await buildIndex(ctx, options);
     } catch (error) {
       if (attempt >= 3) throw error;
       log(`index: attempt ${attempt} failed (${String(error?.message ?? error).slice(0, 120)}) — reconnecting`);
@@ -430,7 +442,12 @@ async function run() {
 
   const limitLabel = limit === Number.POSITIVE_INFINITY ? "all" : String(limit);
   log(`start: ${MODE.list ? "list mode" : "sync mode"} | station ${ctx.station.sn} | target ${cfg.outDir} | limit ${limitLabel}`);
-  const index = await buildIndexWithRetry(ctx);
+  // `--force` retries rows anywhere in the history and a `since` filter hides rows, so both need the
+  // whole list; otherwise the frontier from the previous run keeps the index to a page or two.
+  const fullIndex = MODE.force || MODE.fullIndex || Boolean(since) || !state.frontier;
+  const frontier = fullIndex ? "" : String(state.frontier);
+  log(fullIndex ? "index: full traversal" : `index: incremental from frontier ${frontier}`);
+  const index = await buildIndexWithRetry(ctx, { frontier });
   writeFileSync(indexFile(cfg.stateDir), JSON.stringify({ at: new Date().toISOString(), count: index.length, rows: index }));
   log(`index: ${index.length} recordings on the HomeBase`);
 
@@ -439,6 +456,16 @@ async function run() {
   );
   const archived = Object.keys(state.clips).length;
   log(`state: ${archived} archived, ${Object.keys(state.failures).length} failed, ${pending.length} pending`);
+
+  const frontierAfter = nextFrontier({
+    previous: String(state.frontier ?? ""),
+    oldestPending: pending.length ? toCursor(pending[pending.length - 1].start_time) : "",
+    newestSeen: toCursor(index[0]?.start_time),
+  });
+  if (!since && frontierAfter && frontierAfter !== state.frontier) {
+    state.frontier = frontierAfter;
+    saveState(cfg.stateDir, state);
+  }
 
   if (MODE.indexOnly) return { ok: 0, failed: 0, skipped: 0, pending: pending.length };
 

@@ -194,11 +194,18 @@ the footage; `state.json` records which format each clip has.
 ./run.sh --all               # no limit for this run
 ./run.sh --since 20260101    # only from this day on
 ./run.sh --index-only        # just refresh stateDir/index.json
-./run.sh --force             # retry failed/skipped recordings too
+./run.sh --force             # retry failed/skipped recordings too (forces a full index)
+./run.sh --full-index        # ignore the frontier and walk the whole record list
 ```
 
-`--list` and every normal run build the full station index first: expect a **minute or two per run**
-for a few thousand recordings. That is deliberate — see [internals](docs/internals.md#why-the-index-is-always-complete).
+**The index is incremental.** The first run (and any run with `--force`, `--full-index` or a `--since`
+filter) walks the whole record list; after that a run only pages down to the rows it already has a
+decision for, which in steady state is a single page. A scheduled hourly run therefore takes seconds
+instead of minutes.</br >
+The frontier that makes this safe lives in `state.json`: it is the newest timestamp for which every row
+has a decision (archived, skipped, or failed beyond its retry budget). During a backfill it sits at the
+oldest still-pending row, so the index still pages all the way down — see
+[internals](docs/internals.md#the-index-frontier).
 
 ### First backup of the whole history
 

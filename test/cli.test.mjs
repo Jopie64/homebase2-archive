@@ -63,7 +63,7 @@ describe("parseArgs", () => {
   });
 
   it("recognises every mode flag", () => {
-    const { mode } = parseArgs(["--list", "--force", "--index-only"], cfg);
-    expect(mode).toEqual({ list: true, all: false, force: true, indexOnly: true });
+    const { mode } = parseArgs(["--list", "--force", "--index-only", "--full-index"], cfg);
+    expect(mode).toEqual({ list: true, all: false, force: true, indexOnly: true, fullIndex: true });
   });
 });
