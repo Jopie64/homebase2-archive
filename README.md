@@ -201,7 +201,8 @@ the footage; `state.json` records which format each clip has.
 **The index is incremental.** The first run (and any run with `--force`, `--full-index` or a `--since`
 filter) walks the whole record list; after that a run only pages down to the rows it already has a
 decision for, which in steady state is a single page. A scheduled hourly run therefore takes seconds
-instead of minutes.</br >
+instead of minutes.
+
 The frontier that makes this safe lives in `state.json`: it is the newest timestamp for which every row
 has a decision (archived, skipped, or failed beyond its retry budget). During a backfill it sits at the
 oldest still-pending row, so the index still pages all the way down — see
