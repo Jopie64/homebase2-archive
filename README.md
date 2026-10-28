@@ -303,6 +303,8 @@ Rules of thumb when changing something:
   `PATH` (that is what `nodeBin` is for).
 - `sync.mjs` must keep printing its final `summary: archived=… failed=… skipped=… pending=…` line;
   `backfill.sh` parses exactly that.
+- Install with `npm ci` on a deployment that tracks this repository: `npm install --omit=dev` rewrites
+  `package-lock.json`, and that local change then blocks `git pull` (`install.sh` does this for you).
 
 CI runs the tests plus a syntax check on every push and pull request (Node 24 and 26).
 

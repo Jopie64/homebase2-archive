@@ -53,7 +53,13 @@ if (!existsSync(cfg.credentialsFile)) {
 }
 ' --input-type=module
 
-npm install --omit=dev --no-audit --no-fund
+# `npm ci` never rewrites the lockfile; `npm install --omit=dev` does, and the resulting local change
+# then blocks `git pull` on a deployment that tracks this repository.
+if [ -f package-lock.json ]; then
+  npm ci --omit=dev --no-audit --no-fund
+else
+  npm install --omit=dev --no-audit --no-fund
+fi
 "$NODE_BIN" scripts/patch-sdk.mjs
 
 cat <<EOF
