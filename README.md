@@ -245,7 +245,7 @@ health check in monitoring.
 | Message | Meaning / what to do |
 |---|---|
 | `eufy login limit reached` | Too many logins from this network recently. The session file was dropped; wait (minutes to a day) and run again. Do not retry in a loop. |
-| `level-2 handshake timeout` | The station did not finish the crypto handshake. Usually the station is offline, busy, or not reachable on the LAN. |
+| `level-2 handshake timeout` | The station did not finish the crypto handshake — offline, busy, or not reachable on the LAN. Also happens when a run starts seconds after the previous one ended; the tool retries three times, 15 s apart, before giving up. |
 | `no P2P session to the HomeBase` | Connection failed — check that the station is powered and on the same network; verify `stationSn`. |
 | `several HomeBases found` | Set `stationSn` in `config.json`. |
 | `incomplete index: page N failed` | The station dropped a database query mid-index. Run again; the index is retried three times per run. |

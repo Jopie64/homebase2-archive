@@ -62,8 +62,12 @@ const { log } = createLogger({ stateDir: cfg.stateDir });
 const args = process.argv.slice(2);
 const flag = (name) => args.includes(`--${name}`);
 const opt = (name, fallback) => {
-  const hit = args.find((a) => a.startsWith(`--${name}=`));
-  return hit ? hit.slice(name.length + 3) : fallback;
+  const inline = args.find((argument) => argument.startsWith(`--${name}=`));
+  if (inline) return inline.slice(name.length + 3);
+  const index = args.indexOf(`--${name}`);
+  const next = args[index + 1];
+  if (index !== -1 && next && !next.startsWith("--")) return next;
+  return fallback;
 };
 const MODE = {
   list: flag("list"),
@@ -169,6 +173,23 @@ async function attachStation(ctx) {
   return session;
 }
 
+/**
+ * Connects with a few attempts. The station occasionally ignores a connection that follows another run
+ * too closely, which shows up as a level-2 handshake timeout.
+ */
+async function attachWithRetry(ctx, attempts = 3, delayMs = 15000) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await attachStation(ctx);
+    } catch (error) {
+      if (attempt >= attempts) throw error;
+      const wait = Math.round(delayMs / 1000);
+      log(`session: ${String(error?.message ?? error).slice(0, 120)} — retrying in ${wait}s (${attempt}/${attempts - 1})`);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+}
+
 async function openSession() {
   const creds = loadCreds(cfg.credentialsFile);
   // Keep and reuse the session: logging in on every run hits eufy's login limit ("Hit max login limit").
@@ -196,7 +217,7 @@ async function openSession() {
   const station = pickStation(await eufy.getDevices());
   const admin = station.raw?.member?.admin_user_id ?? "";
   const ctx = { eufy, station, admin, session: undefined };
-  await attachStation(ctx);
+  await attachWithRetry(ctx);
   log(`session: connected to ${station.sn}`);
   return ctx;
 }
@@ -434,7 +455,8 @@ async function run() {
     return ctx.eccCache.get(cipher);
   };
 
-  log(`start: ${MODE.list ? "list mode" : "sync mode"} | station ${ctx.station.sn} | target ${cfg.outDir}`);
+  const limitLabel = limit === Number.POSITIVE_INFINITY ? "all" : String(limit);
+  log(`start: ${MODE.list ? "list mode" : "sync mode"} | station ${ctx.station.sn} | target ${cfg.outDir} | limit ${limitLabel}`);
   const index = await buildIndexWithRetry(ctx);
   writeFileSync(indexFile(cfg.stateDir), JSON.stringify({ at: new Date().toISOString(), count: index.length, rows: index }));
   log(`index: ${index.length} recordings on the HomeBase`);

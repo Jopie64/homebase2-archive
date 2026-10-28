@@ -77,6 +77,10 @@ a different muxing route (`-f hevc`). That has not been verified.
 
 ## Session death
 
+Connecting immediately after another run has finished sometimes gives a level-2 handshake timeout: the
+station appears to need a moment before it accepts a new P2P client. Retrying after 15 seconds works, so
+the first connection is attempted up to three times.
+
 A P2P session survives roughly **50 downloads**, then transfers start failing with
 `the station sent nothing within 20000 ms`. The correct reaction is to close the session, connect again,
 wait for level-2 and retry the same recording — not to abort the run. This tool does that after
