@@ -1,5 +1,7 @@
 # homebase2-archive
 
+[![CI](https://github.com/Jopie64/homebase2-archive/actions/workflows/ci.yml/badge.svg)](https://github.com/Jopie64/homebase2-archive/actions/workflows/ci.yml)
+
 Archive the recordings of a **eufy HomeBase 2** to plain **MP4** files, organised in month folders, on
 your own machine — no app, no cloud subscription, no vendor lock-in for your footage.
 
@@ -31,6 +33,7 @@ a local archive, feed it to Synology Photos / Immich / Jellyfin, or just be inde
 - [Troubleshooting](#troubleshooting)
 - [Known limitations](#known-limitations)
 - [Development](#development)
+- [Dependencies and licensing](#dependencies-and-licensing)
 - [Legal notice](#legal-notice)
 - [License](#license)
 
@@ -307,6 +310,13 @@ Rules of thumb when changing something:
   `package-lock.json`, and that local change then blocks `git pull` (`install.sh` does this for you).
 
 CI runs the tests plus a syntax check on every push and pull request (Node 24 and 26).
+
+## Dependencies and licensing
+
+The single runtime dependency is [`@mega-yfue/eufy-sdk`](https://github.com/mega-yfue/eufy-sdk), installed from
+npm (Apache-2.0, not vendored). `scripts/patch-sdk.mjs` appends one export line to the *installed* copy during
+setup — a local modification of an Apache-2.0 work that stays inside the installed package; its licence and
+notices are left untouched. This project itself is MIT.
 
 ## Legal notice
 
