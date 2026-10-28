@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+
+# Local configuration (deployment specific: station serial, paths, node/ffmpeg locations)
+config.json
+*.local.json
+.env
+
+# Runtime state: bookkeeping, station index and the saved login session (a bearer token!)
+state/
+*.log
+state.json
+index.json
+session.json
+
+# Archived media never belongs in this repository
+clips/
+*.mp4
+*.h264
+*.aac
+*.part
+
+# Editor / OS noise
+.DS_Store
+.idea/
+.vscode/
+*.swp
