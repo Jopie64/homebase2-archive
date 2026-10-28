@@ -20,6 +20,9 @@ clips/
 *.aac
 *.part
 
+# Test output
+coverage/
+
 # Editor / OS noise
 .DS_Store
 .idea/

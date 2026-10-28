@@ -30,6 +30,7 @@ a local archive, feed it to Synology Photos / Immich / Jellyfin, or just be inde
 - [Verifying your archive](#verifying-your-archive)
 - [Troubleshooting](#troubleshooting)
 - [Known limitations](#known-limitations)
+- [Development](#development)
 - [Legal notice](#legal-notice)
 - [License](#license)
 
@@ -271,6 +272,39 @@ Logs: `<stateDir>/sync.log` (rotated at 5 MB) and `<stateDir>/backfill.log`.
   supported.
 - **Unofficial API.** eufy can change the protocol at any time; when that happens this project will
   need a fix.
+
+## Development
+
+```sh
+npm install            # also installs the test runner
+npm test               # vitest — no network, no HomeBase needed
+npm run test:watch
+./run.sh --print-config
+```
+
+The suite covers the logic that decisions depend on, with I/O kept at the edges:
+
+| Module | Responsibility |
+|---|---|
+| `lib/config.mjs` | settings: `config.json`, `HBA_*` overrides, validation |
+| `lib/cli.mjs` | argument parsing (`--limit N` *and* `--limit=N`) |
+| `lib/record.mjs` | which rows are usable/pending, cursors, output naming |
+| `lib/state.mjs` | atomic state file, run lock, session file |
+| `lib/log.mjs` | stdout + rotating log file |
+| `sync.mjs` | the engine: session, index, download, decrypt, mux |
+
+Rules of thumb when changing something:
+
+- **No test may need the station or the network.** If new logic cannot be tested that way, move the pure
+  part into `lib/` instead of mocking the SDK.
+- **Adding a setting** = a key in `lib/config.mjs` (`KEYS`, plus `NUMERIC`/`PATH_KEYS` when relevant),
+  a line in `config.example.json`, and a row in the configuration table above.
+- `run.sh` must keep working on a NAS task scheduler: only POSIX `sh`, and it may not assume `node` is on
+  `PATH` (that is what `nodeBin` is for).
+- `sync.mjs` must keep printing its final `summary: archived=… failed=… skipped=… pending=…` line;
+  `backfill.sh` parses exactly that.
+
+CI runs the tests plus a syntax check on every push and pull request (Node 24 and 26).
 
 ## Legal notice
 
