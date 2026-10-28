@@ -26,8 +26,10 @@ jobs:
 
       - name: Syntax check
         run: |
-          for file in *.mjs lib/*.mjs scripts/*.mjs; do node --check "$file"; done
-          for file in *.sh; do sh -n "$file"; done
+          # Tracked files only, so a deleted directory can never turn into an
+          # unmatched glob that node tries to parse as a filename.
+          while IFS= read -r file; do node --check "$file"; done < <(git ls-files '*.mjs')
+          while IFS= read -r file; do sh -n "$file"; done < <(git ls-files '*.sh')
 
       - name: Tests
         run: npm test
