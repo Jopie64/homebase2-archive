@@ -1,0 +1,17 @@
+{
+  "credentialsFile": "~/.config/homebase2-archive/credentials",
+  "stationSn": "",
+  "outDir": "/volume1/photo/doorbell",
+  "stateDir": "~/.local/state/homebase2-archive",
+  "ffmpeg": "/usr/local/bin/ffmpeg",
+  "nodeBin": "node",
+  "maxClips": 300,
+  "pageSize": 100,
+  "since": "",
+  "clipTimeoutMs": 90000,
+  "drainTimeoutMs": 60000,
+  "maxAttempts": 3,
+  "recoverAfter": 3,
+  "maxRecoveries": 40,
+  "level2TimeoutMs": 60000
+}

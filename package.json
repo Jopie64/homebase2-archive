@@ -1,0 +1,30 @@
+{
+  "name": "homebase2-archive",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "description": "Archive eufy HomeBase 2 camera recordings to plain MP4 files",
+  "keywords": [
+    "eufy",
+    "homebase",
+    "doorbell",
+    "archive",
+    "p2p",
+    "camera"
+  ],
+  "engines": {
+    "node": ">=24.5.0"
+  },
+  "scripts": {
+    "patch": "node scripts/patch-sdk.mjs",
+    "list": "node sync.mjs --list",
+    "sync": "node sync.mjs",
+    "verify": "node verify.mjs",
+    "stats": "node stats.mjs",
+    "config": "node sync.mjs --print-config"
+  },
+  "dependencies": {
+    "@mega-yfue/eufy-sdk": "0.5.0"
+  }
+}
