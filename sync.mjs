@@ -291,10 +291,14 @@ async function buildIndexWithRetry(ctx) {
 const PERMANENT_REASONS = new Set(["key-unavailable", "invalid-recording"]);
 
 /**
- * Finds the camera behind a station channel. The camera — not the station — owns the recording-download
- * capability, and it resolves its own session, channel and cipher key.
+ * Resolves the recording-download callable for a station channel.
+ *
+ * The download lives on the camera's capability surface — `device.camera().downloadRecording()` — and
+ * that member is built when the device is bound. Binding asks whether the camera's parent station is a
+ * T8010, and the P2P layer can only answer that once the device list is loaded. So `getDevices()` has to
+ * run before `getDevice()`: called the other way round the member is simply absent.
  */
-async function cameraFor(ctx, channel) {
+async function downloadFor(ctx, channel) {
   ctx.cameras ??= (await ctx.eufy.getDevices()).filter(
     (device) =>
       device.deviceClass === "camera" &&
@@ -308,10 +312,11 @@ async function cameraFor(ctx, channel) {
   ctx.devices ??= new Map();
   if (!ctx.devices.has(camera.sn)) ctx.devices.set(camera.sn, await ctx.eufy.getDevice(camera.sn));
   const device = ctx.devices.get(camera.sn);
-  if (typeof device.downloadRecording !== "function") {
+  const capability = typeof device.camera === "function" ? device.camera() : undefined;
+  if (typeof capability?.downloadRecording !== "function") {
     throw new Error(`camera ${camera.sn} does not offer recording download in this SDK version`);
   }
-  return device;
+  return capability.downloadRecording;
 }
 
 /** Downloads one recording and returns the decrypted elementary streams. */
@@ -322,11 +327,11 @@ async function fetchClip(ctx, row) {
   if (!storagePath || channel === undefined || !recording) throw new Error(`unusable storage_path: ${storagePath}`);
   // The cloud masks the cipher id; only the low byte resolves to a key record.
   const cipher = (Number(row.cipher_id) || 0) & 0xff;
-  const camera = await cameraFor(ctx, channel);
+  const download = await downloadFor(ctx, channel);
   try {
     // The SDK queues downloads per station (one transfer at a time on the camera's channel), fetches the
     // cipher's ECC key, decrypts and returns H.264/AAC elementary streams.
-    const clip = await camera.downloadRecording({ recording, cipherId: cipher, timeoutMs: cfg.clipTimeoutMs });
+    const clip = await download({ recording, cipherId: cipher, timeoutMs: cfg.clipTimeoutMs });
     return { clip, cipher, channel };
   } catch (error) {
     if (error instanceof RecordingDownloadError && PERMANENT_REASONS.has(error.reason)) error.permanent = true;
